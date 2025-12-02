@@ -1,0 +1,25 @@
+# Core dependencies
+pandas>=2.0.0
+cryptography>=41.0.0
+faker>=19.0.0
+python-dateutil>=2.8.0
+
+# Pattern matching
+regex>=2023.0.0
+
+# UI and CLI
+rich>=13.0.0
+click>=8.1.0
+
+# Utilities
+python-dotenv>=1.0.0
+tqdm>=4.66.0
+
+# Optional dependencies (uncomment if needed)
+# polars>=0.19.0  # Alternative to pandas for faster processing
+# presidio-analyzer>=2.2.0  # Advanced NLP detection
+# presidio-anonymizer>=2.2.0
+# spacy>=3.7.0  # NLP models (requires: python -m spacy download en_core_web_sm)
+# pysqlcipher3>=1.1.0  # Encrypted SQLite (may require system SQLCipher)
+# pyffx>=0.1.0  # Format-preserving encryption library
+
