@@ -11,6 +11,7 @@ from enum import Enum
 class DataType(Enum):
     """Supported data types for anonymization"""
     EMAIL = "email"
+    DOMAIN = "domain"  # Domain-like strings without @ symbol
     PHONE = "phone"
     NAME = "name"
     UUID = "uuid"
@@ -31,6 +32,12 @@ class DataTypeDetector:
     # Email pattern
     EMAIL_PATTERN = re.compile(
         r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$',
+        re.IGNORECASE
+    )
+    
+    # Domain pattern (domain-like strings without @ symbol)
+    DOMAIN_PATTERN = re.compile(
+        r'^[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9]?(\.[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9]?)*\.[a-zA-Z]{2,}$',
         re.IGNORECASE
     )
     
@@ -191,6 +198,17 @@ class DataTypeDetector:
             )
             if numeric_matches > len(valid_samples) * 0.9:
                 type_scores[DataType.NUMERIC_ID] = numeric_matches / len(valid_samples)
+        
+        # Domain detection (domain-like strings without @)
+        if any(keyword in name_lower for keyword in ['domain', 'hostname', 'host', 'tenant']):
+            type_scores[DataType.DOMAIN] = 0.8
+        else:
+            domain_matches = sum(
+                1 for v in valid_samples[:100]
+                if self.DOMAIN_PATTERN.match(str(v).strip()) and '@' not in str(v)
+            )
+            if domain_matches > len(valid_samples) * 0.7:
+                type_scores[DataType.DOMAIN] = domain_matches / len(valid_samples)
         
         # Address detection
         if any(keyword in name_lower for keyword in ['address', 'street', 'city', 'postcode', 'zip']):

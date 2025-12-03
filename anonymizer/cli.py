@@ -38,6 +38,7 @@ def cli():
 @click.option('--interactive', '-I', is_flag=True, help='Interactive column selection')
 @click.option('--seed', '-s', help='Deterministic seed for anonymization')
 @click.option('--mode', '-m', type=click.Choice(['fake', 'fpe', 'hmac', 'hybrid']), help='Anonymization mode')
+@click.option('--vault', '-v', help='Path to existing mapping vault (creates new if not specified)')
 @click.option('--vault-password', help='Password for mapping vault encryption')
 @click.option('--preview/--no-preview', default=True, help='Show preview before processing')
 @click.option('--preserve-domain', is_flag=True, help='Preserve email domains')
@@ -50,6 +51,7 @@ def anonymize(
     interactive: bool,
     seed: Optional[str],
     mode: Optional[str],
+    vault: Optional[str],
     vault_password: Optional[str],
     preview: bool,
     preserve_domain: bool,
@@ -96,14 +98,26 @@ def anonymize(
         anonymization_profile.fully_synthetic = True
     
     # Initialize vault
-    vault_path = session_dir / "mapping_vault.sqlite"
-    vault = None
+    vault_obj = None
     if not anonymization_profile.fully_synthetic:
-        vault = MappingVault(str(vault_path), vault_password)
-        console.print(f"[green]✓[/green] Mapping vault initialized: {vault_path}")
+        if vault:
+            # Use existing vault
+            vault_path = Path(vault)
+            if not vault_path.exists():
+                console.print(f"[yellow]Warning: Vault file not found at {vault_path}, creating new vault[/yellow]")
+                vault_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            vault_obj = MappingVault(str(vault_path), vault_password)
+            console.print(f"[green]✓[/green] Using existing vault: {vault_path}")
+        else:
+            # Create new vault in session directory
+            vault_path = session_dir / "mapping_vault.sqlite"
+            vault_obj = MappingVault(str(vault_path), vault_password)
+            console.print(f"[green]✓[/green] Mapping vault initialized: {vault_path}")
     
     # Create transformer
-    transformer = anonymization_profile.create_transformer(vault=vault)
+    transformer = anonymization_profile.create_transformer(vault=vault_obj)
+    
     console.print(f"[green]✓[/green] Transformer created: {anonymization_profile.mode.value}")
     
     # Initialize processor
@@ -278,12 +292,15 @@ def anonymize(
     
     console.print(f"[green]✓[/green] Format rules saved: {format_rules_path}")
     
-    # Export decryption key if vault exists
-    if vault and not anonymization_profile.fully_synthetic:
+    # Export decryption key if vault exists (only for new vaults, not existing ones)
+    if vault_obj and not anonymization_profile.fully_synthetic and not vault:
         key_path = session_dir / "decryption_key.json"
-        vault.export_key(str(key_path))
+        vault_obj.export_key(str(key_path))
         console.print(f"[yellow]⚠[/yellow] Decryption key saved: {key_path}")
         console.print("[yellow]⚠[/yellow] Keep this key secure for reversibility!")
+    elif vault_obj and vault:
+        # If using existing vault, remind user about key file location
+        console.print(f"[dim]Using existing vault. If you need the decryption key, use the key file from when the vault was created.[/dim]")
     
     # Generate validation report
     report_path = validation_report.generate_report()

@@ -148,6 +148,8 @@ class FormatPreservingFakeTransformer(FormatPreservingTransformer):
         # Generate based on data type
         if data_type == DataType.EMAIL:
             result = self._transform_email(value_str)
+        elif data_type == DataType.DOMAIN:
+            result = self._transform_domain(value_str)
         elif data_type == DataType.PHONE:
             result = self._transform_phone(value_str)
         elif data_type == DataType.NAME:
@@ -301,20 +303,80 @@ class FormatPreservingFakeTransformer(FormatPreservingTransformer):
         # Generate fake IBAN (simplified)
         return self.faker.iban()
     
+    def _transform_domain(self, value: str) -> str:
+        """Transform domain-like strings (e.g., gcwhalewatching.onmicrosoft.com)"""
+        # Handle domain anonymization
+        if self.preserve_domain:
+            # Anonymize domain deterministically (same domain → same anonymized domain)
+            return self._anonymize_domain(value)
+        else:
+            # Generate completely new fake domain
+            fake_domain = self.faker.domain_name()
+            # Preserve TLD if original had one
+            if '.' in value:
+                original_tld = value.split('.')[-1]
+                fake_parts = fake_domain.split('.')
+                if len(fake_parts) > 1:
+                    fake_domain = '.'.join(fake_parts[:-1]) + '.' + original_tld
+                else:
+                    fake_domain = fake_domain + '.' + original_tld
+            return fake_domain
+    
     def _transform_free_text(self, value: str) -> str:
-        """Transform free text while preserving structure"""
+        """Transform free text while preserving structure - handles domains, complex strings, etc."""
+        # Check if it looks like a domain (contains dots, alphanumeric)
+        if '.' in value and not value.startswith('.') and not value.endswith('.'):
+            parts = value.split('.')
+            if len(parts) >= 2 and all(p and (p.isalnum() or '-' in p) for p in parts):
+                # Treat as domain-like string
+                if self.preserve_domain:
+                    return self._anonymize_domain(value)
+                else:
+                    fake_domain = self.faker.domain_name()
+                    # Preserve TLD if original had one
+                    original_tld = parts[-1] if parts else 'com'
+                    fake_parts = fake_domain.split('.')
+                    if len(fake_parts) > 1:
+                        fake_domain = '.'.join(fake_parts[:-1]) + '.' + original_tld
+                    else:
+                        fake_domain = fake_domain + '.' + original_tld
+                    return fake_domain
+        
+        # Handle space-separated words
         words = value.split()
-        fake_words = []
-        
-        for word in words:
-            if word.isalpha():
-                fake_word = self.faker.word()[:len(word)]
-                fake_word = self._preserve_format(word, fake_word)
-                fake_words.append(fake_word)
+        if len(words) > 1:
+            fake_words = []
+            for word in words:
+                if word.isalpha():
+                    fake_word = self.faker.word()[:len(word)]
+                    fake_word = self._preserve_format(word, fake_word)
+                    fake_words.append(fake_word)
+                else:
+                    # Try to anonymize non-alphabetic words character by character
+                    fake_words.append(self._anonymize_string_char_by_char(word))
+            return ' '.join(fake_words)
+        else:
+            # Single word or no spaces - anonymize character by character
+            return self._anonymize_string_char_by_char(value)
+    
+    def _anonymize_string_char_by_char(self, value: str) -> str:
+        """Anonymize string character by character while preserving structure"""
+        result = []
+        for char in value:
+            if char.isalnum():
+                if char.isdigit():
+                    # Replace digit with random digit
+                    result.append(str(random.randint(0, 9)))
+                elif char.isupper():
+                    # Replace uppercase with random uppercase
+                    result.append(chr(random.randint(ord('A'), ord('Z'))))
+                else:
+                    # Replace lowercase with random lowercase
+                    result.append(chr(random.randint(ord('a'), ord('z'))))
             else:
-                fake_words.append(word)
-        
-        return ' '.join(fake_words)
+                # Preserve special characters
+                result.append(char)
+        return ''.join(result)
 
 
 class FPETransformer(FormatPreservingTransformer):
@@ -356,6 +418,8 @@ class FPETransformer(FormatPreservingTransformer):
             result = self._fpe_encrypt_numeric(value_str)
         elif data_type == DataType.EMAIL:
             result = self._fpe_encrypt_email(value_str)
+        elif data_type == DataType.DOMAIN:
+            result = self._fpe_encrypt_domain(value_str)
         elif data_type == DataType.PHONE:
             result = self._fpe_encrypt_phone(value_str)
         else:
@@ -421,6 +485,15 @@ class FPETransformer(FormatPreservingTransformer):
         """FPE for phone numbers"""
         return self._fpe_encrypt_numeric(value)
     
+    def _fpe_encrypt_domain(self, value: str) -> str:
+        """FPE for domain addresses"""
+        if self.preserve_domain:
+            # Anonymize domain deterministically
+            return self._anonymize_domain(value)
+        else:
+            # Encrypt the domain character by character
+            return self._fpe_encrypt_string(value)
+    
     def _fpe_encrypt_string(self, value: str) -> str:
         """FPE for general strings (character-level)"""
         result = []
@@ -469,6 +542,8 @@ class SeededHMACTransformer(FormatPreservingTransformer):
         # Map to format-preserving output
         if data_type == DataType.EMAIL:
             return self._hash_to_email(hash_hex, value_str)
+        elif data_type == DataType.DOMAIN:
+            return self._hash_to_domain(hash_hex, value_str)
         elif data_type == DataType.PHONE:
             return self._hash_to_phone(hash_hex, value_str)
         elif data_type == DataType.NAME:
@@ -509,6 +584,44 @@ class SeededHMACTransformer(FormatPreservingTransformer):
             domain_part = domain_part + '.com'
         
         return f"{local_part}@{domain_part}"
+    
+    def _hash_to_domain(self, hash_hex: str, original: str) -> str:
+        """Convert hash to domain format"""
+        if self.preserve_domain:
+            # Anonymize domain deterministically using hash of domain
+            domain_seed = f"{self.seed or 'default'}:__domain__:{original}"
+            domain_hash_obj = hashlib.sha256(domain_seed.encode())
+            domain_hash_hex = domain_hash_obj.hexdigest()
+            
+            # Generate domain-like string from hash
+            parts = original.split('.')
+            fake_parts = []
+            
+            for i, part in enumerate(parts[:-1]):  # All but TLD
+                hash_part = domain_hash_hex[i*8:(i+1)*8]
+                fake_part = ''.join(chr(ord('a') + int(c, 16) % 26) for c in hash_part[:len(part)])
+                fake_parts.append(fake_part)
+            
+            # Preserve TLD
+            original_tld = parts[-1] if parts else 'com'
+            fake_parts.append(original_tld)
+            
+            return '.'.join(fake_parts)
+        else:
+            # Use hash to generate domain
+            parts = original.split('.')
+            fake_parts = []
+            
+            for i, part in enumerate(parts[:-1]):  # All but TLD
+                hash_part = hash_hex[i*8:(i+1)*8]
+                fake_part = ''.join(chr(ord('a') + int(c, 16) % 26) for c in hash_part[:len(part)])
+                fake_parts.append(fake_part)
+            
+            # Generate random TLD or preserve
+            original_tld = parts[-1] if parts else 'com'
+            fake_parts.append(original_tld)
+            
+            return '.'.join(fake_parts)
     
     def _hash_to_phone(self, hash_hex: str, original: str) -> str:
         """Convert hash to phone format"""
