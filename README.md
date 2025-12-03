@@ -123,20 +123,78 @@ This allows you to:
 - Maintain domain-level relationships
 - See distribution patterns
 
-### Example 4: Deterministic Seed (Referential Integrity)
+### Example 4: Multiple Files in One Command (Shared Vault)
 
 ```bash
-# Process multiple files with same seed
-python -m anonymizer.cli anonymize -i customers.csv orders.csv -o output/ \
-    --seed my_secret_seed
+# Process multiple files together - they automatically share the same vault
+python -m anonymizer.cli anonymize \
+    -i customers.csv \
+    -i orders.csv \
+    -i products.csv \
+    -o output/ \
+    --seed my_secret_seed \
+    --profile referential_integrity
 ```
 
 **Result:**
+- All files use the same vault automatically
 - "John Smith" in `customers.csv` → "Bob Johnson"
 - "John Smith" in `orders.csv` → "Bob Johnson" (same mapping!)
-- Maintains relationships across files
+- Same values across all files get the same anonymized output
+- Maintains relationships across all files
 
-### Example 5: Using Profiles
+**Benefits:**
+- Consistent anonymization across multiple files
+- Single vault file for easy management
+- All files processed in one session
+
+### Example 5: Using Existing Vault (Reuse Mappings)
+
+```bash
+# First run - creates vault
+python -m anonymizer.cli anonymize \
+    -i customers_sample.csv \
+    -o output/ \
+    --seed test_seed \
+    --profile referential_integrity \
+    --interactive \
+    --preserve-domain
+
+# Second run - reuse the same vault (same mappings!)
+python -m anonymizer.cli anonymize \
+    -i new_customers.csv \
+    -o output/ \
+    --seed test_seed \
+    --profile referential_integrity \
+    --vault output/20240101_120000/mapping_vault.sqlite \
+    --vault-password your_password
+```
+
+**Result:**
+- Values seen in the first run get the same anonymized output in the second run
+- New values are added to the existing vault
+- Perfect for incremental processing or adding new files to a project
+
+**Using a Shared Vault Location:**
+```bash
+# Create a shared vault for your project
+python -m anonymizer.cli anonymize \
+    -i file1.csv \
+    -o output/ \
+    --seed project_seed \
+    --vault shared_vaults/my_project.sqlite \
+    --vault-password my_password
+
+# Add more files to the same project vault
+python -m anonymizer.cli anonymize \
+    -i file2.csv \
+    -o output/ \
+    --seed project_seed \
+    --vault shared_vaults/my_project.sqlite \
+    --vault-password my_password
+```
+
+### Example 6: Using Profiles
 
 ```bash
 # GDPR-compliant (reversible with FPE)
@@ -152,7 +210,7 @@ python -m anonymizer.cli anonymize -i data.csv -o output/ --profile test_data
 python -m anonymizer.cli anonymize -i data.csv -o output/ --profile fast_hash
 ```
 
-### Example 6: Decrypt Anonymized Data
+### Example 7: Decrypt Anonymized Data
 
 ```bash
 # Decrypt using vault password
@@ -182,13 +240,14 @@ python -m anonymizer.cli anonymize [OPTIONS]
 ```
 
 **Options:**
-- `-i, --input`: Input CSV file(s) (can specify multiple)
+- `-i, --input`: Input CSV file(s) (can specify multiple with multiple `-i` flags)
 - `-o, --output`: Output directory
 - `-p, --profile`: Anonymization profile (default, gdpr_compliant, test_data, fast_hash, referential_integrity)
 - `-c, --columns`: Columns to anonymize (can specify multiple, all if not specified)
 - `-I, --interactive`: Interactive column selection
 - `-s, --seed`: Deterministic seed for anonymization
 - `-m, --mode`: Anonymization mode (fake, fpe, hmac, hybrid)
+- `-v, --vault`: Path to existing mapping vault (creates new if not specified)
 - `--vault-password`: Password for mapping vault encryption
 - `--preserve-domain`: Anonymize domains deterministically (preserve grouping)
 - `--no-vault`: Do not store mappings (fully synthetic)
@@ -361,7 +420,9 @@ preview_df = processor.preview_transformation(
 print(preview_df)
 ```
 
-## 🔑 Understanding Seeds
+## 🔑 Understanding Seeds and Vaults
+
+### Seeds Make Anonymization Deterministic
 
 The `--seed` parameter makes anonymization **deterministic**:
 
@@ -386,7 +447,22 @@ python -m anonymizer.cli anonymize -i data.csv -o output2/ --seed my_seed
 # "John Smith" → "Bob Johnson" (same!)
 ```
 
-**Important:** Use the same seed when decrypting that you used when anonymizing!
+### Vaults Store Mappings for Consistency
+
+The **mapping vault** stores all original-to-anonymized value mappings:
+
+- **Same vault = shared mappings**: Multiple files processed together automatically share the same vault
+- **Existing vault = reuse mappings**: Use `--vault` to reuse mappings from previous runs
+- **Consistency guaranteed**: Same value in same column with same seed = same anonymized output
+
+**Key Points:**
+- Multiple files in one command → automatically share the same vault ✅
+- Use `--vault` option → reuse mappings from previous sessions ✅
+- Same seed + same vault = consistent anonymization across all files ✅
+
+**Important:** 
+- Use the same seed when decrypting that you used when anonymizing
+- Use the same vault (or vault password) when reusing mappings
 
 ## 🔒 Security & Vault Management
 
@@ -402,6 +478,25 @@ The `decryption_key.json` file contains the actual encryption key. **Keep it sec
 - Anyone with this file can decrypt your data
 - Store separately from the vault
 - Consider deleting if you rely on password-only access
+
+### Using Existing Vaults
+
+To reuse mappings from a previous anonymization session:
+
+```bash
+# Use an existing vault from a previous run
+python -m anonymizer.cli anonymize \
+    -i new_file.csv \
+    -o output/ \
+    --seed your_seed \
+    --vault output/20240101_120000/mapping_vault.sqlite \
+    --vault-password your_password
+```
+
+**Benefits:**
+- Values seen before get the same anonymized output
+- New values are added to the existing vault
+- Perfect for incremental processing or adding files to a project
 
 ### Reversibility
 
