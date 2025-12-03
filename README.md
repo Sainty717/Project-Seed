@@ -572,19 +572,7 @@ Large files are automatically processed in chunks (default: 10,000 rows) for mem
 5. **Use consistent seeds** for referential integrity across files
 6. **Review validation reports** after processing
 
-## 🐛 Troubleshooting
 
-### Import Errors
-- **Issue**: Missing optional dependencies
-- **Solution**: Only install what you need. Core functionality works with basic requirements.
-
-### SQLCipher Installation Fails
-- **Issue**: SQLCipher installation fails on Windows
-- **Solution**: Mapping vault works with standard SQLite. SQLCipher is optional.
-
-### Slow Processing
-- **Issue**: Large files process slowly
-- **Solution**: Files are processed in chunks automatically. Adjust `chunk_size` in CSVProcessor if needed.
 
 ## 📚 Additional Documentation
 
@@ -600,21 +588,5 @@ This is a comprehensive anonymization framework. Feel free to extend it with:
 - New anonymization modes
 - Performance optimizations
 
-## 📄 License
 
-MIT License - See [LICENSE](LICENSE) file for details.
 
-## 🙏 Acknowledgments
-
-Built with:
-- `pandas` - Data processing
-- `cryptography` - Encryption
-- `faker` - Fake data generation
-- `rich` - Beautiful CLI interface
-- `click` - Command-line interface
-
----
-
-**Version**: 1.0.0
-
-For more information, run `python -m anonymizer.cli --help`
