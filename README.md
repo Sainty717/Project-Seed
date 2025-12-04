@@ -1,6 +1,6 @@
 # Format-Preserving Data Anonymization Framework
 
-A powerful Python tool for anonymizing CSV files while preserving data formats, enabling realistic test data generation, GDPR-compliant pseudonymization, and optional deterministic reversibility.
+A powerful Python tool for anonymizing CSV and Excel files while preserving data formats, enabling realistic test data generation, GDPR-compliant pseudonymization, and optional deterministic reversibility.
 
 ## 🎯 Key Features
 
@@ -13,6 +13,9 @@ A powerful Python tool for anonymizing CSV files while preserving data formats, 
 - **Cross-Dataset Integrity**: Maintain referential integrity across multiple files
 - **Domain-Level Grouping**: Preserve email domain relationships while anonymizing
 - **Interactive Column Selection**: User-friendly interface for selecting columns to anonymize
+- **Excel File Support**: Full support for .xlsx, .xls, .xlsm, .xlsb, and .ods files
+- **Multi-Sheet Excel Handling**: Process multiple sheets, preserve structure, or merge sheets
+- **Excel Interactive Mode**: Step through each sheet and select columns interactively
 - **Full Decryption Support**: Restore anonymized data back to original values
 - **Performance Optimized**: Stream processing and chunked processing for large datasets
 
@@ -52,18 +55,27 @@ python -m spacy download en_core_web_sm
 First, see what data types are detected:
 
 ```bash
+# Analyze CSV file
 python -m anonymizer.cli analyze -f data.csv
+
+# Analyze Excel file
+python -m anonymizer.cli analyze -f data.xlsx --sheet "Sheet1"
 ```
 
 ### 2. Basic Anonymization
 
 ```bash
+# CSV file
 python -m anonymizer.cli anonymize -i data.csv -o output/
+
+# Excel file (preserves sheet structure by default)
+python -m anonymizer.cli anonymize -i data.xlsx -o output/
 ```
 
 This will:
 - Automatically detect data types
 - Create anonymized version in `output/TIMESTAMP/anonymized_files/`
+- For Excel: Preserve sheet structure (one Excel file with multiple sheets)
 - Store mapping vault for reversibility
 - Generate validation report
 - Show preview before processing
@@ -210,7 +222,100 @@ python -m anonymizer.cli anonymize -i data.csv -o output/ --profile test_data
 python -m anonymizer.cli anonymize -i data.csv -o output/ --profile fast_hash
 ```
 
-### Example 7: Decrypt Anonymized Data
+### Example 7: Excel File Support
+
+#### Basic Excel Processing
+
+```bash
+# Process Excel file (preserves sheet structure by default)
+python -m anonymizer.cli anonymize -i data.xlsx -o output/ --seed my_seed
+```
+
+**Result:**
+- All sheets processed and preserved in one Excel file
+- Original sheet names maintained
+- Same structure as input file
+
+#### Interactive Mode for Excel
+
+```bash
+# Interactive mode: step through each sheet and select columns
+python -m anonymizer.cli anonymize -i data.xlsx -o output/ --seed my_seed --interactive
+```
+
+**What happens:**
+1. Automatically detects all visible sheets
+2. For each sheet:
+   - Shows detected columns and types
+   - Prompts you to select columns to anonymize
+   - You can select different columns for each sheet
+3. No need to specify `--sheet` manually
+
+#### Process Specific Sheets
+
+```bash
+# Process only selected sheets (still preserves structure)
+python -m anonymizer.cli anonymize \
+    -i data.xlsx \
+    -o output/ \
+    --seed my_seed \
+    --sheet "Sheet1" \
+    --sheet "Sheet2"
+```
+
+#### Merge Multiple Sheets into One
+
+```bash
+# Merge all sheets into a single sheet
+python -m anonymizer.cli anonymize \
+    -i data.xlsx \
+    -o output/ \
+    --seed my_seed \
+    --merge-sheets
+```
+
+**Result:**
+- All sheets combined into one output file
+- Adds `_Sheet` column to identify source sheet
+
+#### Write Each Sheet to Separate Files
+
+```bash
+# Write each sheet to a separate file
+python -m anonymizer.cli anonymize \
+    -i data.xlsx \
+    -o output/ \
+    --seed my_seed \
+    --separate-sheets
+```
+
+**Result:**
+- `data_Sheet1.xlsx`, `data_Sheet2.xlsx`, etc.
+
+#### Excel with Header Row Handling
+
+```bash
+# Skip rows and specify header row
+python -m anonymizer.cli anonymize \
+    -i data.xlsx \
+    -o output/ \
+    --seed my_seed \
+    --skip-rows 2 \
+    --header-row 2
+```
+
+#### Output Excel as CSV
+
+```bash
+# Convert Excel to CSV during anonymization
+python -m anonymizer.cli anonymize \
+    -i data.xlsx \
+    -o output/ \
+    --seed my_seed \
+    --output-format csv
+```
+
+### Example 8: Decrypt Anonymized Data
 
 ```bash
 # Decrypt using vault password
@@ -240,11 +345,11 @@ python -m anonymizer.cli anonymize [OPTIONS]
 ```
 
 **Options:**
-- `-i, --input`: Input CSV file(s) (can specify multiple with multiple `-i` flags)
+- `-i, --input`: Input file(s) - CSV or Excel (.xlsx, .xls, .xlsm, .xlsb, .ods) (can specify multiple with multiple `-i` flags)
 - `-o, --output`: Output directory
 - `-p, --profile`: Anonymization profile (default, gdpr_compliant, test_data, fast_hash, referential_integrity)
 - `-c, --columns`: Columns to anonymize (can specify multiple, all if not specified)
-- `-I, --interactive`: Interactive column selection
+- `-I, --interactive`: Interactive column selection (for Excel: step through each sheet)
 - `-s, --seed`: Deterministic seed for anonymization
 - `-m, --mode`: Anonymization mode (fake, fpe, hmac, hybrid)
 - `-v, --vault`: Path to existing mapping vault (creates new if not specified)
@@ -253,13 +358,30 @@ python -m anonymizer.cli anonymize [OPTIONS]
 - `--no-vault`: Do not store mappings (fully synthetic)
 - `--preview/--no-preview`: Show preview before processing (default: true)
 
+**Excel-Specific Options:**
+- `--sheet`: Sheet name(s) to process (all sheets if not specified, Excel only)
+- `--merge-sheets`: Merge multiple sheets into one sheet (Excel only, default: preserve structure)
+- `--separate-sheets`: Write each sheet to a separate file (Excel only, default: preserve structure)
+- `--header-row`: Row index (0-based) to use as header (auto-detect if not specified, Excel only)
+- `--skip-rows`: Number of rows to skip before reading (Excel only, default: 0)
+- `--output-format`: Output format for Excel files - 'excel' or 'csv' (default: 'excel')
+
 ### Analyze Command
 
 ```bash
+# Analyze CSV file
 python -m anonymizer.cli analyze -f data.csv [--sample N]
+
+# Analyze Excel file
+python -m anonymizer.cli analyze -f data.xlsx [--sheet SHEET_NAME] [--header-row N] [--skip-rows N]
 ```
 
-Detects data types in CSV files and shows confidence scores.
+Detects data types in CSV or Excel files and shows confidence scores.
+
+**Excel Options:**
+- `--sheet`: Sheet name to analyze (uses first sheet if not specified)
+- `--header-row`: Row index (0-based) to use as header (auto-detect if not specified)
+- `--skip-rows`: Number of rows to skip before reading (default: 0)
 
 ### Decrypt Command
 
@@ -363,7 +485,7 @@ output/
 
 ## 💻 Python API Usage
 
-### Basic Example
+### Basic Example (CSV)
 
 ```python
 from anonymizer.core.vault import MappingVault
@@ -375,11 +497,40 @@ vault = MappingVault('vault.sqlite', password='my_password')
 transformer = HybridTransformer(vault=vault, seed='my_seed')
 processor = CSVProcessor(transformer=transformer)
 
-# Process file
+# Process CSV file
 processor.process_file(
     'input.csv',
     'output.csv',
     columns_to_anonymize=['name', 'email', 'phone']
+)
+```
+
+### Excel File Example
+
+```python
+from anonymizer.core.vault import MappingVault
+from anonymizer.core.transformers import HybridTransformer
+from anonymizer.utils.excel_processor import ExcelProcessor
+
+# Initialize components
+vault = MappingVault('vault.sqlite', password='my_password')
+transformer = HybridTransformer(vault=vault, seed='my_seed')
+processor = ExcelProcessor(transformer=transformer)
+
+# Process single sheet
+processor.process_sheet(
+    'input.xlsx',
+    'output.xlsx',
+    sheet_name='Sheet1',
+    columns_to_anonymize=['name', 'email', 'phone']
+)
+
+# Process multiple sheets (preserves structure)
+processor.process_multiple_sheets_to_one_file(
+    'input.xlsx',
+    'output.xlsx',
+    sheet_names=['Sheet1', 'Sheet2'],
+    columns_to_anonymize={'Sheet1': ['name', 'email'], 'Sheet2': ['phone', 'address']}
 )
 ```
 
@@ -554,14 +705,74 @@ When `--preserve-domain` is enabled:
 
 ### Interactive Mode
 
+#### CSV Files
 Use `--interactive` for guided column selection:
 - Shows detected types and confidence scores
 - Select columns by number or name
 - Perfect for exploring your data first
 
+#### Excel Files
+Enhanced interactive mode for Excel files:
+- Automatically detects all visible sheets
+- Steps through each sheet one by one
+- For each sheet:
+  - Shows detected columns and types
+  - Lets you select columns to anonymize
+  - Different column selections per sheet supported
+- No need to specify `--sheet` manually
+- Perfect for complex Excel files with multiple sheets
+
+**Example:**
+```bash
+python -m anonymizer.cli anonymize -i data.xlsx -o output/ --interactive
+```
+
+### Excel Sheet Handling
+
+The framework provides three modes for handling multiple Excel sheets:
+
+1. **Default (Preserve Structure)**: Writes all sheets to one Excel file, maintaining original sheet names
+   ```bash
+   python -m anonymizer.cli anonymize -i data.xlsx -o output/
+   ```
+
+2. **Merge Sheets**: Combines all sheets into a single sheet
+   ```bash
+   python -m anonymizer.cli anonymize -i data.xlsx -o output/ --merge-sheets
+   ```
+
+3. **Separate Files**: Writes each sheet to a separate file
+   ```bash
+   python -m anonymizer.cli anonymize -i data.xlsx -o output/ --separate-sheets
+   ```
+
+### Excel File Format Support
+
+Supported Excel formats:
+- **.xlsx**: Modern Excel format (default)
+- **.xls**: Legacy Excel format
+- **.xlsm**: Excel with macros
+- **.xlsb**: Binary Excel format (requires `pyxlsb`)
+- **.ods**: OpenDocument Spreadsheet (requires `odfpy`)
+
+### Excel Header Detection
+
+The framework automatically detects header rows in Excel files:
+- Auto-detection: Analyzes first 20 rows to find the header
+- Manual specification: Use `--header-row N` to specify exact row (0-based)
+- Skip rows: Use `--skip-rows N` to skip blank rows before data
+
+**Example:**
+```bash
+# Skip 2 blank rows, header is at row 2 (0-based)
+python -m anonymizer.cli anonymize -i data.xlsx -o output/ --skip-rows 2 --header-row 2
+```
+
 ### Chunked Processing
 
 Large files are automatically processed in chunks (default: 10,000 rows) for memory efficiency.
+- CSV files: True chunked streaming
+- Excel files: In-memory processing with progress indicators (for very large files, consider converting to CSV first)
 
 ## 📝 Best Practices
 
@@ -571,6 +782,9 @@ Large files are automatically processed in chunks (default: 10,000 rows) for mem
 4. **Test with preview** before processing large datasets
 5. **Use consistent seeds** for referential integrity across files
 6. **Review validation reports** after processing
+7. **For Excel files**: Use `--interactive` mode to explore sheets and columns before processing
+8. **For large Excel files**: Consider converting to CSV first for better performance
+9. **Preserve sheet structure**: Default behavior maintains Excel file structure - use `--merge-sheets` or `--separate-sheets` only when needed
 
 ## 🐛 Troubleshooting
 
@@ -585,6 +799,30 @@ Large files are automatically processed in chunks (default: 10,000 rows) for mem
 ### Slow Processing
 - **Issue**: Large files process slowly
 - **Solution**: Files are processed in chunks automatically. Adjust `chunk_size` in CSVProcessor if needed.
+
+### Excel File Issues
+
+#### "Could not read ODS file"
+- **Issue**: Missing `odfpy` library
+- **Solution**: Install with `pip install odfpy`
+
+#### "pyxlsb is required for .xlsb files"
+- **Issue**: Missing `pyxlsb` library
+- **Solution**: Install with `pip install pyxlsb`
+
+#### "Error reading Excel sheet"
+- **Issue**: Corrupted file, protected sheet, or unsupported format
+- **Solution**: 
+  - Check if file is password-protected
+  - Try opening in Excel and saving as .xlsx
+  - Verify file is not corrupted
+
+#### Excel file too large
+- **Issue**: Memory errors when processing very large Excel files
+- **Solution**: 
+  - Convert to CSV first: `pandas.read_excel()` then `to_csv()`
+  - Use `--separate-sheets` to process sheets individually
+  - Process in smaller batches
 
 ## 📚 Additional Documentation
 
@@ -612,6 +850,8 @@ Built with:
 - `faker` - Fake data generation
 - `rich` - Beautiful CLI interface
 - `click` - Command-line interface
+- `openpyxl` - Excel file support (.xlsx, .xlsm)
+- `xlrd` - Legacy Excel support (.xls)
 
 ---
 

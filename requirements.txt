@@ -15,6 +15,14 @@ click>=8.1.0
 python-dotenv>=1.0.0
 tqdm>=4.66.0
 
+# Excel file support
+openpyxl>=3.1.0  # For .xlsx, .xlsm files
+xlrd>=2.0.1  # For .xls files (legacy format)
+
+# Optional Excel dependencies (uncomment if needed)
+# pyxlsb>=1.0.9  # For .xlsb binary Excel files
+# odfpy>=1.4.1  # For .ods OpenDocument Spreadsheet files
+
 # Optional dependencies (uncomment if needed)
 # polars>=0.19.0  # Alternative to pandas for faster processing
 # presidio-analyzer>=2.2.0  # Advanced NLP detection

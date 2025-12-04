@@ -16,6 +16,7 @@ from .core.detector import DataTypeDetector, DataType
 from .core.vault import MappingVault
 from .core.transformers import FormatPreservingTransformer
 from .utils.csv_processor import CSVProcessor
+from .utils.excel_processor import ExcelProcessor
 from .utils.validators import ValidationReport
 from .config.profiles import AnonymizationProfile, AnonymizationMode, get_default_profiles
 
@@ -31,7 +32,7 @@ def cli():
 
 
 @cli.command()
-@click.option('--input', '-i', required=True, multiple=True, help='Input CSV file(s)')
+@click.option('--input', '-i', required=True, multiple=True, help='Input file(s) - CSV or Excel (.xlsx, .xls, .xlsm, .xlsb, .ods)')
 @click.option('--output', '-o', required=True, help='Output directory')
 @click.option('--profile', '-p', default='default', help='Anonymization profile')
 @click.option('--columns', '-c', multiple=True, help='Columns to anonymize (all if not specified)')
@@ -43,6 +44,13 @@ def cli():
 @click.option('--preview/--no-preview', default=True, help='Show preview before processing')
 @click.option('--preserve-domain', is_flag=True, help='Preserve email domains')
 @click.option('--no-vault', is_flag=True, help='Do not store mappings (fully synthetic)')
+# Excel-specific options
+@click.option('--sheet', multiple=True, help='Sheet name(s) to process (all sheets if not specified, Excel only)')
+@click.option('--merge-sheets', is_flag=True, help='Merge multiple sheets into one sheet (Excel only, default: preserve sheet structure)')
+@click.option('--separate-sheets', is_flag=True, help='Write each sheet to a separate file (Excel only, default: preserve sheet structure)')
+@click.option('--header-row', type=int, help='Row index (0-based) to use as header (auto-detect if not specified, Excel only)')
+@click.option('--skip-rows', type=int, default=0, help='Number of rows to skip before reading (Excel only)')
+@click.option('--output-format', type=click.Choice(['excel', 'csv']), default='excel', help='Output format for Excel files (excel or csv)')
 def anonymize(
     input: tuple,
     output: str,
@@ -55,9 +63,15 @@ def anonymize(
     vault_password: Optional[str],
     preview: bool,
     preserve_domain: bool,
-    no_vault: bool
+    no_vault: bool,
+    sheet: tuple,
+    merge_sheets: bool,
+    separate_sheets: bool,
+    header_row: Optional[int],
+    skip_rows: int,
+    output_format: str
 ):
-    """Anonymize CSV file(s) while preserving format"""
+    """Anonymize CSV or Excel file(s) while preserving format"""
     
     input_files = list(input)
     output_dir = Path(output)
@@ -120,11 +134,29 @@ def anonymize(
     
     console.print(f"[green]✓[/green] Transformer created: {anonymization_profile.mode.value}")
     
-    # Initialize processor
-    processor = CSVProcessor(transformer=transformer)
+    # Detect file types and initialize appropriate processors
+    excel_files = []
+    csv_files = []
+    
+    for input_file in input_files:
+        input_path = Path(input_file)
+        if ExcelProcessor.is_excel_file(input_path):
+            excel_files.append(input_file)
+        else:
+            csv_files.append(input_file)
+    
+    # Initialize processors
+    csv_processor = CSVProcessor(transformer=transformer) if csv_files else None
+    excel_processor = ExcelProcessor(transformer=transformer) if excel_files else None
+    
+    if excel_files:
+        console.print(f"[green]✓[/green] Excel processor initialized ({len(excel_files)} Excel file(s))")
+    if csv_files:
+        console.print(f"[green]✓[/green] CSV processor initialized ({len(csv_files)} CSV file(s))")
     
     # Interactive column selection
     columns_to_anonymize = list(columns) if columns else None
+    excel_columns_by_sheet = {}  # Dict to store column selections per sheet for Excel files
     
     if interactive and input_files:
         console.print("\n[bold cyan]Interactive Column Selection[/bold cyan]")
@@ -133,77 +165,204 @@ def anonymize(
         try:
             # Detect schema from first file
             first_file = input_files[0]
-            schema = processor.extract_schema(first_file)
+            first_path = Path(first_file)
             
-            # Display schema table
-            schema_table = Table(title="Detected Columns", show_header=True, header_style="bold magenta")
-            schema_table.add_column("#", style="dim", width=4)
-            schema_table.add_column("Column Name", style="cyan")
-            schema_table.add_column("Detected Type", style="green")
-            schema_table.add_column("Confidence", style="yellow")
-            
-            column_list = list(schema.keys())
-            for idx, (col_name, (data_type, confidence)) in enumerate(schema.items(), 1):
-                schema_table.add_row(
-                    str(idx),
-                    col_name,
-                    data_type.value,
-                    f"{confidence:.1%}"
-                )
-            
-            console.print(schema_table)
-            console.print()
-            
-            # Interactive selection
-            if columns:
-                # If columns were provided via CLI, use those
-                console.print(f"[green]Using columns from command line: {', '.join(columns)}[/green]")
-                columns_to_anonymize = list(columns)
-            else:
-                # Let user select columns
-                console.print("[bold]Select columns to anonymize:[/bold]")
-                console.print("[dim]Enter column numbers separated by commas (e.g., 1,2,3) or 'all' for all columns[/dim]")
-                console.print("[dim]Press Enter with no input to anonymize all columns[/dim]\n")
+            # Use appropriate processor based on file type
+            if ExcelProcessor.is_excel_file(first_path):
+                if not excel_processor:
+                    console.print("[red]Error: Excel processor not initialized[/red]")
+                    return
                 
-                selection = Prompt.ask("Column selection", default="all")
+                # For Excel, iterate through each sheet
+                sheets = excel_processor.list_sheets(first_file, include_hidden=False)
                 
-                if selection.lower() == 'all' or not selection.strip():
-                    columns_to_anonymize = column_list
-                    console.print(f"[green]Selected all columns: {', '.join(columns_to_anonymize)}[/green]")
+                if not sheet:
+                    # Auto-select all visible sheets for interactive mode
+                    selected_sheets = [s['name'] for s in sheets if s['visible']]
+                    console.print(f"[bold]Found {len(selected_sheets)} sheet(s) in {first_path.name}[/bold]\n")
                 else:
-                    try:
-                        # Parse comma-separated numbers
-                        indices = [int(x.strip()) for x in selection.split(',')]
-                        selected_columns = [column_list[i-1] for i in indices if 1 <= i <= len(column_list)]
-                        
-                        if selected_columns:
-                            columns_to_anonymize = selected_columns
-                            console.print(f"[green]Selected columns: {', '.join(columns_to_anonymize)}[/green]")
-                        else:
-                            console.print("[yellow]No valid columns selected, anonymizing all columns[/yellow]")
-                            columns_to_anonymize = column_list
-                    except (ValueError, IndexError):
-                        console.print("[red]Invalid selection format. Using all columns.[/red]")
-                        columns_to_anonymize = column_list
+                    selected_sheets = list(sheet)
                 
+                # Go through each sheet and let user select columns
+                for sheet_name in selected_sheets:
+                    console.print(f"\n[bold cyan]Sheet: {sheet_name}[/bold cyan]")
+                    console.print("-" * 60)
+                    
+                    # Extract schema for this sheet
+                    schema = excel_processor.extract_schema(
+                        first_file,
+                        sheet_name=sheet_name,
+                        header_row=header_row,
+                        skip_rows=skip_rows
+                    )
+                    
+                    # Display schema table
+                    schema_table = Table(title=f"Columns in '{sheet_name}'", show_header=True, header_style="bold magenta")
+                    schema_table.add_column("#", style="dim", width=4)
+                    schema_table.add_column("Column Name", style="cyan")
+                    schema_table.add_column("Detected Type", style="green")
+                    schema_table.add_column("Confidence", style="yellow")
+                    
+                    column_list = list(schema.keys())
+                    for idx, (col_name, (data_type, confidence)) in enumerate(schema.items(), 1):
+                        schema_table.add_row(
+                            str(idx),
+                            col_name,
+                            data_type.value,
+                            f"{confidence:.1%}"
+                        )
+                    
+                    console.print(schema_table)
+                    console.print()
+                    
+                    # Interactive selection for this sheet
+                    if columns:
+                        # If columns were provided via CLI, use those for all sheets
+                        sheet_columns = list(columns)
+                        console.print(f"[green]Using columns from command line: {', '.join(sheet_columns)}[/green]")
+                    else:
+                        # Let user select columns for this sheet
+                        console.print(f"[bold]Select columns to anonymize in '{sheet_name}':[/bold]")
+                        console.print("[dim]Enter column numbers separated by commas (e.g., 1,2,3) or 'all' for all columns[/dim]")
+                        console.print("[dim]Press Enter with no input to anonymize all columns[/dim]\n")
+                        
+                        selection = Prompt.ask(f"Column selection for '{sheet_name}'", default="all")
+                        
+                        if selection.lower() == 'all' or not selection.strip():
+                            sheet_columns = column_list
+                            console.print(f"[green]Selected all columns: {', '.join(sheet_columns)}[/green]")
+                        else:
+                            try:
+                                # Parse comma-separated numbers
+                                indices = [int(x.strip()) for x in selection.split(',')]
+                                selected_columns = [column_list[i-1] for i in indices if 1 <= i <= len(column_list)]
+                                
+                                if selected_columns:
+                                    sheet_columns = selected_columns
+                                    console.print(f"[green]Selected columns: {', '.join(sheet_columns)}[/green]")
+                                else:
+                                    console.print("[yellow]No valid columns selected, anonymizing all columns[/yellow]")
+                                    sheet_columns = column_list
+                            except (ValueError, IndexError):
+                                console.print("[red]Invalid selection format. Using all columns.[/red]")
+                                sheet_columns = column_list
+                    
+                    excel_columns_by_sheet[sheet_name] = sheet_columns
+                    console.print()
+                
+                # Update sheet tuple with selected sheets
+                sheet = tuple(selected_sheets)
+                console.print(f"[green]✓[/green] Completed column selection for {len(selected_sheets)} sheet(s)\n")
+                
+            else:
+                # CSV file - standard interactive mode
+                if not csv_processor:
+                    console.print("[red]Error: CSV processor not initialized[/red]")
+                    return
+                
+                schema = csv_processor.extract_schema(first_file)
+                
+                # Display schema table
+                schema_table = Table(title="Detected Columns", show_header=True, header_style="bold magenta")
+                schema_table.add_column("#", style="dim", width=4)
+                schema_table.add_column("Column Name", style="cyan")
+                schema_table.add_column("Detected Type", style="green")
+                schema_table.add_column("Confidence", style="yellow")
+                
+                column_list = list(schema.keys())
+                for idx, (col_name, (data_type, confidence)) in enumerate(schema.items(), 1):
+                    schema_table.add_row(
+                        str(idx),
+                        col_name,
+                        data_type.value,
+                        f"{confidence:.1%}"
+                    )
+                
+                console.print(schema_table)
                 console.print()
+                
+                # Interactive selection
+                if columns:
+                    # If columns were provided via CLI, use those
+                    console.print(f"[green]Using columns from command line: {', '.join(columns)}[/green]")
+                    columns_to_anonymize = list(columns)
+                else:
+                    # Let user select columns
+                    console.print("[bold]Select columns to anonymize:[/bold]")
+                    console.print("[dim]Enter column numbers separated by commas (e.g., 1,2,3) or 'all' for all columns[/dim]")
+                    console.print("[dim]Press Enter with no input to anonymize all columns[/dim]\n")
+                    
+                    selection = Prompt.ask("Column selection", default="all")
+                    
+                    if selection.lower() == 'all' or not selection.strip():
+                        columns_to_anonymize = column_list
+                        console.print(f"[green]Selected all columns: {', '.join(columns_to_anonymize)}[/green]")
+                    else:
+                        try:
+                            # Parse comma-separated numbers
+                            indices = [int(x.strip()) for x in selection.split(',')]
+                            selected_columns = [column_list[i-1] for i in indices if 1 <= i <= len(column_list)]
+                            
+                            if selected_columns:
+                                columns_to_anonymize = selected_columns
+                                console.print(f"[green]Selected columns: {', '.join(columns_to_anonymize)}[/green]")
+                            else:
+                                console.print("[yellow]No valid columns selected, anonymizing all columns[/yellow]")
+                                columns_to_anonymize = column_list
+                        except (ValueError, IndexError):
+                            console.print("[red]Invalid selection format. Using all columns.[/red]")
+                            columns_to_anonymize = column_list
+                    
+                    console.print()
         
         except Exception as e:
             console.print(f"[red]Error during interactive selection: {e}[/red]")
             console.print("[yellow]Falling back to anonymizing all columns[/yellow]")
             columns_to_anonymize = None
+            excel_columns_by_sheet = {}
     
     # Show preview if requested
     if preview and input_files:
         console.print("\n[bold]Preview Mode[/bold]")
         preview_file = input_files[0]
+        preview_path = Path(preview_file)
         
         try:
-            preview_df = processor.preview_transformation(
-                preview_file,
-                columns_to_anonymize,
-                num_samples=5
-            )
+            if ExcelProcessor.is_excel_file(preview_path):
+                if not excel_processor:
+                    console.print("[red]Error: Excel processor not initialized[/red]")
+                    return
+                
+                # For Excel with multiple sheets, show preview for first sheet
+                sheet_name = sheet[0] if sheet else None
+                
+                # Use per-sheet columns if available
+                preview_columns = None
+                if excel_columns_by_sheet and sheet_name and sheet_name in excel_columns_by_sheet:
+                    preview_columns = excel_columns_by_sheet[sheet_name]
+                else:
+                    preview_columns = columns_to_anonymize
+                
+                preview_df = excel_processor.preview_transformation(
+                    preview_file,
+                    sheet_name=sheet_name,
+                    columns_to_anonymize=preview_columns,
+                    num_samples=5,
+                    header_row=header_row,
+                    skip_rows=skip_rows
+                )
+                
+                if sheet_name:
+                    console.print(f"[dim]Preview for sheet: {sheet_name}[/dim]\n")
+            else:
+                if not csv_processor:
+                    console.print("[red]Error: CSV processor not initialized[/red]")
+                    return
+                preview_df = csv_processor.preview_transformation(
+                    preview_file,
+                    columns_to_anonymize,
+                    num_samples=5
+                )
             
             # Display preview table
             table = Table(title="Transformation Preview", show_header=True, header_style="bold magenta")
@@ -253,23 +412,138 @@ def anonymize(
                 import shutil
                 shutil.copy2(input_path, original_dir / input_path.name)
                 
-                # Process file
-                output_file = anonymized_dir / input_path.name
-                result = processor.process_file(
-                    str(input_path),
-                    str(output_file),
-                    columns_to_anonymize=columns_to_anonymize,
-                    show_progress=True
-                )
+                # Process file based on type
+                if ExcelProcessor.is_excel_file(input_path):
+                    if not excel_processor:
+                        console.print(f"[red]Error: Excel processor not initialized for {input_path.name}[/red]")
+                        continue
+                    
+                    # Process Excel file
+                    # If no sheets specified and not in interactive mode, get all sheets
+                    if not sheet and not interactive:
+                        all_sheets = excel_processor.list_sheets(str(input_path), include_hidden=False)
+                        sheet_names = [s['name'] for s in all_sheets if s['visible']]
+                    else:
+                        sheet_names = list(sheet) if sheet else None
+                    
+                    # Determine output behavior
+                    if merge_sheets:
+                        # Merge all sheets into one sheet (explicit merge)
+                        results = excel_processor.process_multiple_sheets(
+                            str(input_path),
+                            str(anonymized_dir),
+                            sheet_names=sheet_names,
+                            merge_sheets=True,
+                            columns_to_anonymize=columns_to_anonymize,
+                            header_row=header_row,
+                            skip_rows=skip_rows,
+                            show_progress=True,
+                            output_format=output_format
+                        )
+                        
+                        for result in results:
+                            validation_report.add_file_result(
+                                f"{input_path.stem}_merged",
+                                result["columns_anonymized"],
+                                result["rows_processed"]
+                            )
+                        console.print(f"[green]✓[/green] Processed: {input_path.name} - Merged {len(sheet_names) if sheet_names else 'all'} sheet(s)")
+                    
+                    elif separate_sheets and sheet_names and len(sheet_names) > 1:
+                        # Explicit request for separate files
+                        results = excel_processor.process_multiple_sheets(
+                            str(input_path),
+                            str(anonymized_dir),
+                            sheet_names=sheet_names,
+                            merge_sheets=False,
+                            columns_to_anonymize=columns_to_anonymize,
+                            header_row=header_row,
+                            skip_rows=skip_rows,
+                            show_progress=True,
+                            output_format=output_format
+                        )
+                        
+                        for result in results:
+                            validation_report.add_file_result(
+                                f"{input_path.stem}_{result['sheet_name']}",
+                                result["columns_anonymized"],
+                                result["rows_processed"]
+                            )
+                            console.print(f"[green]✓[/green] Processed: {input_path.name} - Sheet: {result['sheet_name']}")
+                    
+                    elif sheet_names and len(sheet_names) > 1:
+                        # Multiple sheets - default: preserve structure (one Excel file with multiple sheets)
+                        output_file = anonymized_dir / f"{input_path.stem}.xlsx"
+                        
+                        # Use per-sheet column selections if available from interactive mode
+                        columns_dict = excel_columns_by_sheet if excel_columns_by_sheet else None
+                        if columns_dict is None and columns_to_anonymize:
+                            # If same columns for all sheets, create dict
+                            columns_dict = {name: columns_to_anonymize for name in sheet_names}
+                        
+                        result = excel_processor.process_multiple_sheets_to_one_file(
+                            str(input_path),
+                            str(output_file),
+                            sheet_names=sheet_names,
+                            columns_to_anonymize=columns_dict,
+                            header_row=header_row,
+                            skip_rows=skip_rows,
+                            show_progress=True
+                        )
+                        
+                        # Add results for each sheet
+                        for sheet_name, sheet_result in result["results_by_sheet"].items():
+                            validation_report.add_file_result(
+                                f"{input_path.stem}::{sheet_name}",
+                                sheet_result["columns_anonymized"],
+                                sheet_result["rows"]
+                            )
+                        
+                        console.print(f"[green]✓[/green] Processed: {input_path.name} - {len(sheet_names)} sheet(s) preserved in one Excel file")
+                    
+                    else:
+                        # Single sheet
+                        sheet_name = sheet_names[0] if sheet_names else None
+                        output_file = anonymized_dir / f"{input_path.stem}.{'xlsx' if output_format == 'excel' else 'csv'}"
+                        
+                        result = excel_processor.process_sheet(
+                            str(input_path),
+                            str(output_file),
+                            sheet_name=sheet_name,
+                            columns_to_anonymize=columns_to_anonymize,
+                            header_row=header_row,
+                            skip_rows=skip_rows,
+                            show_progress=True,
+                            output_format=output_format
+                        )
+                        
+                        validation_report.add_file_result(
+                            input_path.name,
+                            result["columns_anonymized"],
+                            result["rows_processed"]
+                        )
+                        console.print(f"[green]✓[/green] Processed: {input_path.name}")
+                else:
+                    # Process CSV file
+                    if not csv_processor:
+                        console.print(f"[red]Error: CSV processor not initialized for {input_path.name}[/red]")
+                        continue
+                    
+                    output_file = anonymized_dir / input_path.name
+                    result = csv_processor.process_file(
+                        str(input_path),
+                        str(output_file),
+                        columns_to_anonymize=columns_to_anonymize,
+                        show_progress=True
+                    )
+                    
+                    validation_report.add_file_result(
+                        input_path.name,
+                        result["columns_anonymized"],
+                        result["rows_processed"]
+                    )
+                    console.print(f"[green]✓[/green] Processed: {input_path.name}")
                 
-                # Add to validation report
-                validation_report.add_file_result(
-                    input_path.name,
-                    result["columns_anonymized"],
-                    result["rows_processed"]
-                )
-                
-                console.print(f"[green]✓[/green] Processed: {input_path.name}")
                 progress.update(task, advance=1)
             
             except Exception as e:
@@ -322,10 +596,13 @@ def anonymize(
 
 
 @cli.command()
-@click.option('--file', '-f', required=True, help='CSV file to analyze')
+@click.option('--file', '-f', required=True, help='File to analyze (CSV or Excel)')
 @click.option('--sample', '-s', default=100, help='Number of rows to sample')
-def analyze(file: str, sample: int):
-    """Analyze CSV file and detect data types"""
+@click.option('--sheet', help='Sheet name to analyze (Excel only, uses first sheet if not specified)')
+@click.option('--header-row', type=int, help='Row index (0-based) to use as header (Excel only, auto-detect if not specified)')
+@click.option('--skip-rows', type=int, default=0, help='Number of rows to skip before reading (Excel only)')
+def analyze(file: str, sample: int, sheet: Optional[str], header_row: Optional[int], skip_rows: int):
+    """Analyze CSV or Excel file and detect data types"""
     
     file_path = Path(file)
     if not file_path.exists():
@@ -335,9 +612,22 @@ def analyze(file: str, sample: int):
     console.print(f"\n[bold]Analyzing: {file}[/bold]\n")
     
     detector = DataTypeDetector()
-    processor = CSVProcessor(transformer=None, detector=detector)
     
-    schema = processor.extract_schema(file, sample_rows=sample)
+    if ExcelProcessor.is_excel_file(file_path):
+        processor = ExcelProcessor(transformer=None, detector=detector)
+        schema = processor.extract_schema(
+            file,
+            sheet_name=sheet,
+            sample_rows=sample,
+            header_row=header_row,
+            skip_rows=skip_rows
+        )
+        
+        if sheet:
+            console.print(f"[dim]Sheet: {sheet}[/dim]\n")
+    else:
+        processor = CSVProcessor(transformer=None, detector=detector)
+        schema = processor.extract_schema(file, sample_rows=sample)
     
     # Display results
     table = Table(title="Schema Detection Results", show_header=True, header_style="bold magenta")
