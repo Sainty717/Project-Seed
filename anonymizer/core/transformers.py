@@ -403,15 +403,20 @@ class FPETransformer(FormatPreservingTransformer):
     ) -> str:
         """Transform using Format-Preserving Encryption"""
         
-        if self.vault:
-            cached = self.vault.get_mapping(value, column_name, self.seed)
-            if cached:
-                return cached
+        # Normalize value for consistent vault lookups
+        if value is not None:
+            value_str = str(value).strip()
+        else:
+            value_str = None
         
-        if not value:
+        if not value_str:
             return value
         
-        value_str = str(value).strip()
+        # Check vault first for deterministic mapping (using normalized value)
+        if self.vault:
+            cached = self.vault.get_mapping(value_str, column_name, self.seed)
+            if cached:
+                return cached
         
         # FPE works best on numeric/alphanumeric data
         if data_type in [DataType.NUMERIC_ID, DataType.CREDIT_CARD, DataType.ABN]:

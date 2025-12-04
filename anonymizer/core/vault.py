@@ -82,10 +82,21 @@ class MappingVault:
         conn.close()
     
     def _hash_key(self, original_value: str, column_name: str, seed: Optional[str] = None) -> str:
-        """Generate deterministic hash key for lookup"""
-        key_string = f"{column_name}:{original_value}"
-        if seed:
-            key_string = f"{seed}:{key_string}"
+        """
+        Generate deterministic hash key for lookup.
+        
+        Normalizes values to ensure consistent lookups:
+        - Strips whitespace from original_value and column_name
+        - Ensures seed is included consistently
+        """
+        # Normalize values for consistent lookups
+        normalized_value = str(original_value).strip() if original_value else ""
+        normalized_column = str(column_name).strip() if column_name else ""
+        normalized_seed = str(seed).strip() if seed else None
+        
+        key_string = f"{normalized_column}:{normalized_value}"
+        if normalized_seed:
+            key_string = f"{normalized_seed}:{key_string}"
         return hashlib.sha256(key_string.encode()).hexdigest()
     
     def store_mapping(
@@ -97,18 +108,39 @@ class MappingVault:
         rule_version: str = "1.0",
         seed: Optional[str] = None
     ):
-        """Store a mapping in the vault"""
-        hash_key = self._hash_key(original_value, column_name, seed)
+        """
+        Store a mapping in the vault.
         
-        # Encrypt values before storage
-        encrypted_original = self.cipher.encrypt(original_value.encode())
-        encrypted_anonymized = self.cipher.encrypt(anonymized_value.encode())
+        IMPORTANT: Never overwrites existing mappings. If a mapping already exists
+        for the same original_value + column_name + seed, this method will skip
+        storing to preserve consistency across multiple runs.
+        """
+        hash_key = self._hash_key(original_value, column_name, seed)
         
         conn = sqlite3.connect(str(self.vault_path))
         cursor = conn.cursor()
         
+        # Check if mapping already exists - NEVER overwrite existing mappings
         cursor.execute('''
-            INSERT OR REPLACE INTO mappings 
+            SELECT anonymized_value FROM mappings
+            WHERE hash_key = ?
+        ''', (hash_key,))
+        
+        existing = cursor.fetchone()
+        
+        if existing:
+            # Mapping already exists - do NOT overwrite it!
+            # This ensures consistency: once a value is mapped, it stays mapped
+            conn.close()
+            return
+        
+        # No existing mapping - safe to insert new one
+        # Encrypt values before storage
+        encrypted_original = self.cipher.encrypt(original_value.encode())
+        encrypted_anonymized = self.cipher.encrypt(anonymized_value.encode())
+        
+        cursor.execute('''
+            INSERT INTO mappings 
             (hash_key, original_value, anonymized_value, data_type, column_name, rule_version)
             VALUES (?, ?, ?, ?, ?, ?)
         ''', (
