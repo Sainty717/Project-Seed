@@ -34,10 +34,10 @@ python -m anonymizer.cli analyze -f data.xlsx
 
 ```bash
 # CSV file
-python -m anonymizer.cli anonymize -i data.csv -o output/
+python -m anonymizer.cli anonymize -i data.csv -o output/ --vault-password your_password
 
 # Excel file (preserves sheet structure)
-python -m anonymizer.cli anonymize -i data.xlsx -o output/ --seed my_seed
+python -m anonymizer.cli anonymize -i data.xlsx -o output/ --seed my_seed --vault-password your_password
 ```
 
 ### 3. Decrypt Anonymized Data
@@ -275,3 +275,4 @@ MIT License - See [LICENSE](LICENSE) file for details.
 
 For more information, run `python -m anonymizer.cli --help`  
 For detailed documentation, see [DETAILED_GUIDE.md](DETAILED_GUIDE.md)
+
