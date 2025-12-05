@@ -65,13 +65,13 @@ python -m anonymizer.cli decrypt \
 ### Interactive Column Selection
 
 ```bash
-python -m anonymizer.cli anonymize -i data.csv -o output/ --interactive
+python -m anonymizer.cli anonymize -i data.csv -o output/ --interactive -p your_password --seed my_seed
 ```
 
 ### Preserve Domain Grouping
 
 ```bash
-python -m anonymizer.cli anonymize -i data.csv -o output/ --preserve-domain
+python -m anonymizer.cli anonymize -i data.csv -o output/ --preserve-domain -p your_password --seed my_seed
 ```
 
 **Result:** `john.smith@gmail.com` → `fakeuser@anonymizedgmail.com`  
@@ -86,7 +86,9 @@ python -m anonymizer.cli anonymize \
     -i products.csv \
     -o output/ \
     --seed my_secret_seed \
-    --profile referential_integrity
+    --profile referential_integrity \
+    -p your_password --seed my_seed
+
 ```
 
 All files automatically share the same vault - same values get the same anonymized output across all files.
@@ -99,14 +101,15 @@ python -m anonymizer.cli anonymize \
     -i customers_sample.csv \
     -o output/ \
     --seed test_seed \
-    --profile referential_integrity
+    --profile referential_integrity\
+    -p your_password
 
 # Second run - reuse the same vault
 python -m anonymizer.cli anonymize \
     -i new_customers.csv \
     -o output/ \
     --seed test_seed \
-    --vault output/20240101_120000/mapping_vault.sqlite \
+    --vault output/{your time stamp}/mapping_vault.sqlite \
     --vault-password your_password
 ```
 
@@ -114,10 +117,10 @@ python -m anonymizer.cli anonymize \
 
 ```bash
 # Process all sheets (preserves structure)
-python -m anonymizer.cli anonymize -i data.xlsx -o output/ --seed my_seed
+python -m anonymizer.cli anonymize -i data.xlsx -o output/ --seed my_seed --vault-password your_password
 
 # Interactive mode: step through each sheet
-python -m anonymizer.cli anonymize -i data.xlsx -o output/ --seed my_seed --interactive
+python -m anonymizer.cli anonymize -i data.xlsx -o output/ --seed my_seed --interactive --vault-password your_password
 
 # Process specific sheets
 python -m anonymizer.cli anonymize \
@@ -125,7 +128,8 @@ python -m anonymizer.cli anonymize \
     -o output/ \
     --seed my_seed \
     --sheet "Sheet1" \
-    --sheet "Sheet2"
+    --sheet "Sheet2" \
+    --vault-password your_password
 ```
 
 ## 🔧 Command Reference
@@ -172,7 +176,7 @@ python -m anonymizer.cli decrypt \
 ### Reverse Lookup
 
 ```bash
-python -m anonymizer.cli reverse -v vault.sqlite -o "John Smith" -c name --seed seed
+python -m anonymizer.cli reverse -v output/{your time stamp}/mapping_vault.sqlite -o "John Smith" -c {$columb name} --seed my_seed -p your_password
 ```
 
 ## 🔐 Anonymization Modes
@@ -275,4 +279,5 @@ MIT License - See [LICENSE](LICENSE) file for details.
 
 For more information, run `python -m anonymizer.cli --help`  
 For detailed documentation, see [DETAILED_GUIDE.md](DETAILED_GUIDE.md)
+
 
