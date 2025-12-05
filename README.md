@@ -252,8 +252,6 @@ processor.process_file(
 ## 📚 Documentation
 
 - **[DETAILED_GUIDE.md](DETAILED_GUIDE.md)**: Complete documentation with all features, examples, and advanced usage
-- **[USAGE.md](USAGE.md)**: Detailed usage guide
-- **[QUICKSTART.md](QUICKSTART.md)**: Quick start guide
 
 ## 🐛 Troubleshooting
 
@@ -279,5 +277,6 @@ MIT License - See [LICENSE](LICENSE) file for details.
 
 For more information, run `python -m anonymizer.cli --help`  
 For detailed documentation, see [DETAILED_GUIDE.md](DETAILED_GUIDE.md)
+
 
 
