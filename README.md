@@ -10,6 +10,7 @@ A powerful Python tool for anonymizing CSV and Excel files while preserving data
 - **Reversible Anonymization**: Encrypted mapping vault for deterministic reversibility
 - **Cross-Dataset Integrity**: Maintain referential integrity across multiple files
 - **Excel File Support**: Full support for .xlsx, .xls, .xlsm, .xlsb, and .ods files with multi-sheet handling
+- **Full CSV Support**
 - **Full Decryption Support**: Restore anonymized data back to original values
 
 ## 📦 Installation
@@ -280,6 +281,7 @@ MIT License - See [LICENSE](LICENSE) file for details.
 
 For more information, run `python -m anonymizer.cli --help`  
 For detailed documentation, see [DETAILED_GUIDE.md](DETAILED_GUIDE.md)
+
 
 
 
