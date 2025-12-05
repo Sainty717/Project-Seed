@@ -260,12 +260,15 @@ processor.process_file(
 - For large files, consider converting to CSV first
 - Use `--interactive` to explore sheets first
 
-**Slow processing?**
-- Files are automatically processed in chunks
-- For very large Excel files, convert to CSV first
-
 **Missing dependencies?**
 - Install optional packages: `pip install pyxlsb odfpy` (only if needed)
+
+**Errors**
+-Error during interactive selection: Error reading Excel file: File is not a zip file
+Falling back to anonymizing all columns 
+
+to fix the above error review your excel to confirm it is not password projected, if so please save a copy without password to continue.
+
 
 ## 📄 License
 
@@ -277,6 +280,7 @@ MIT License - See [LICENSE](LICENSE) file for details.
 
 For more information, run `python -m anonymizer.cli --help`  
 For detailed documentation, see [DETAILED_GUIDE.md](DETAILED_GUIDE.md)
+
 
 
 
