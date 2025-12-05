@@ -662,13 +662,14 @@ def reverse(vault: str, password: Optional[str], original: str, column: str, see
 
 
 @cli.command()
-@click.option('--input', '-i', required=True, help='Anonymized CSV file to decrypt')
-@click.option('--output', '-o', required=True, help='Output decrypted CSV file')
+@click.option('--input', '-i', required=True, help='Anonymized file to decrypt (CSV or Excel)')
+@click.option('--output', '-o', required=True, help='Output decrypted file (CSV or Excel)')
 @click.option('--vault', '-v', required=True, help='Path to mapping vault')
 @click.option('--password', '-p', help='Vault password')
 @click.option('--key-file', '-k', help='Path to decryption key JSON file')
 @click.option('--columns', '-c', multiple=True, help='Columns to decrypt (all anonymized columns if not specified)')
 @click.option('--seed', '-s', help='Seed used for anonymization')
+@click.option('--sheet', multiple=True, help='Sheet name(s) to decrypt (Excel only, all sheets if not specified)')
 def decrypt(
     input: str,
     output: str,
@@ -676,12 +677,15 @@ def decrypt(
     password: Optional[str],
     key_file: Optional[str],
     columns: tuple,
-    seed: Optional[str]
+    seed: Optional[str],
+    sheet: tuple
 ):
-    """Decrypt anonymized CSV file back to original values"""
+    """Decrypt anonymized CSV or Excel file back to original values"""
     
     import pandas as pd
     from tqdm import tqdm
+    from openpyxl import Workbook
+    from openpyxl.utils.dataframe import dataframe_to_rows
     
     input_path = Path(input)
     output_path = Path(output)
@@ -717,111 +721,279 @@ def decrypt(
         console.print("[yellow]Make sure you have the correct password or key file[/yellow]")
         return
     
-    # Read anonymized file
-    try:
-        df = pd.read_csv(input_path)
-        console.print(f"[green]✓[/green] Loaded {len(df)} rows from CSV")
-    except Exception as e:
-        console.print(f"[red]Error reading CSV: {e}[/red]")
-        return
+    # Check if input is Excel file
+    is_excel = ExcelProcessor.is_excel_file(input_path)
     
-    # Determine columns to decrypt
-    if columns:
-        # User specified columns - decrypt only those
-        columns_to_decrypt = [col for col in columns if col in df.columns]
-    else:
-        # Auto-detect: only decrypt columns that have mappings in the vault
+    if is_excel:
+        # Process Excel file
+        excel_processor = ExcelProcessor(transformer=None)
+        
+        # Get list of sheets
+        all_sheets = excel_processor.list_sheets(str(input_path), include_hidden=False)
+        
+        # Determine which sheets to process
+        if sheet:
+            sheet_names = [s['name'] for s in all_sheets if s['name'] in sheet and s['visible']]
+            if not sheet_names:
+                console.print(f"[yellow]Warning: No valid sheets found. Available sheets: {[s['name'] for s in all_sheets if s['visible']]}[/yellow]")
+                return
+        else:
+            # Process all visible sheets
+            sheet_names = [s['name'] for s in all_sheets if s['visible']]
+        
+        console.print(f"[green]✓[/green] Found {len(sheet_names)} sheet(s) to decrypt")
+        
+        # Get columns with mappings from vault
+        columns_with_mappings = set()
         try:
             stats = vault_obj.get_statistics()
             columns_with_mappings = set(stats.get("column_counts", {}).keys())
-            # Only decrypt columns that exist in both CSV and vault
-            columns_to_decrypt = [col for col in df.columns if col in columns_with_mappings]
-            
-            if columns_to_decrypt:
-                console.print(f"[dim]Auto-detected {len(columns_to_decrypt)} column(s) with mappings in vault[/dim]")
-            else:
-                console.print("[yellow]No columns with mappings found in vault. Nothing to decrypt.[/yellow]")
-                console.print("[dim]All columns will be preserved as-is.[/dim]")
         except Exception as e:
             console.print(f"[yellow]Could not query vault for column mappings: {e}[/yellow]")
-            console.print("[yellow]Will attempt to decrypt all columns...[/yellow]")
-            columns_to_decrypt = list(df.columns)
-    
-    # Filter to only columns that exist
-    columns_to_decrypt = [col for col in columns_to_decrypt if col in df.columns]
-    
-    if not columns_to_decrypt:
-        console.print("[yellow]No valid columns to decrypt. Saving file with all original values preserved.[/yellow]")
-        # Still save the file even if nothing to decrypt
-        df.to_csv(output_path, index=False)
-        console.print(f"[green]✓[/green] File saved to: {output_path} (no decryption needed)")
-        return
-    
-    console.print(f"\n[bold]Decrypting {len(columns_to_decrypt)} column(s)...[/bold]\n")
-    
-    # Decrypt each column
-    decrypted_count = 0
-    failed_count = 0
-    not_found_count = 0
-    
-    for column in tqdm(columns_to_decrypt, desc="Decrypting columns", disable=False):
-        try:
-            original_count = len(df[column].dropna())
-            decrypted_in_col = 0
-            
-            # Decrypt values
-            def decrypt_value(x):
-                nonlocal decrypted_in_col
-                if pd.notna(x) and str(x).strip():
-                    original = vault_obj.reverse_lookup(str(x), column, seed)
-                    if original is not None:
-                        decrypted_in_col += 1
-                        return original
-                    # If not found in vault, keep the anonymized value
-                return x
-            
-            df[column] = df[column].apply(decrypt_value)
-            
-            decrypted_count += decrypted_in_col
-            not_found = original_count - decrypted_in_col
-            
-            if decrypted_in_col > 0:
-                console.print(f"[green]✓[/green] {column}: {decrypted_in_col}/{original_count} values decrypted")
-                if not_found > 0:
-                    console.print(f"[dim]  ({not_found} values not found in vault, kept as-is)[/dim]")
-            else:
-                console.print(f"[yellow]⚠[/yellow] {column}: No mappings found in vault (kept as-is)")
-                not_found_count += not_found
         
+        # Process each sheet
+        total_decrypted_count = 0
+        total_not_found_count = 0
+        total_failed_count = 0
+        total_rows = 0
+        all_columns_decrypted = set()
+        results_by_sheet = {}
+        
+        # Create new workbook for output
+        wb = Workbook()
+        wb.remove(wb.active)  # Remove default sheet
+        
+        for sheet_name in tqdm(sheet_names, desc="Decrypting sheets", disable=False):
+            console.print(f"\n[bold]Processing sheet: {sheet_name}[/bold]")
+            
+            try:
+                # Read sheet
+                df = excel_processor.read_excel_sheet(
+                    str(input_path),
+                    sheet_name=sheet_name
+                )
+                
+                total_rows += len(df)
+                
+                # Determine columns to decrypt for this sheet
+                if columns:
+                    # User specified columns - decrypt only those
+                    columns_to_decrypt = [col for col in columns if col in df.columns]
+                else:
+                    # Auto-detect: only decrypt columns that have mappings in the vault
+                    if columns_with_mappings:
+                        columns_to_decrypt = [col for col in df.columns if col in columns_with_mappings]
+                    else:
+                        # Try all columns
+                        columns_to_decrypt = list(df.columns)
+                
+                # Filter to only columns that exist
+                columns_to_decrypt = [col for col in columns_to_decrypt if col in df.columns]
+                
+                if not columns_to_decrypt:
+                    console.print(f"[dim]No columns to decrypt in sheet '{sheet_name}' (preserving as-is)[/dim]")
+                    # Still add sheet to output
+                    ws = wb.create_sheet(title=sheet_name)
+                    for r in dataframe_to_rows(df, index=False, header=True):
+                        ws.append(r)
+                    results_by_sheet[sheet_name] = {
+                        "rows": len(df),
+                        "columns_decrypted": [],
+                        "values_decrypted": 0
+                    }
+                    continue
+                
+                all_columns_decrypted.update(columns_to_decrypt)
+                console.print(f"[dim]Decrypting {len(columns_to_decrypt)} column(s) in '{sheet_name}'...[/dim]")
+                
+                # Decrypt each column
+                decrypted_count = 0
+                not_found_count = 0
+                failed_count = 0
+                
+                for column in columns_to_decrypt:
+                    try:
+                        original_count = len(df[column].dropna())
+                        decrypted_in_col = 0
+                        
+                        # Decrypt values
+                        def decrypt_value(x):
+                            nonlocal decrypted_in_col
+                            if pd.notna(x) and str(x).strip():
+                                original = vault_obj.reverse_lookup(str(x), column, seed)
+                                if original is not None:
+                                    decrypted_in_col += 1
+                                    return original
+                                # If not found in vault, keep the anonymized value
+                            return x
+                        
+                        df[column] = df[column].apply(decrypt_value)
+                        
+                        decrypted_count += decrypted_in_col
+                        not_found = original_count - decrypted_in_col
+                        not_found_count += not_found
+                        
+                        if decrypted_in_col > 0:
+                            console.print(f"[green]  ✓[/green] {column}: {decrypted_in_col}/{original_count} values decrypted")
+                        elif original_count > 0:
+                            console.print(f"[yellow]  ⚠[/yellow] {column}: No mappings found in vault (kept as-is)")
+                    
+                    except Exception as e:
+                        console.print(f"[red]  ✗[/red] Error decrypting {column}: {e}")
+                        failed_count += 1
+                
+                total_decrypted_count += decrypted_count
+                total_not_found_count += not_found_count
+                total_failed_count += failed_count
+                
+                # Add sheet to workbook
+                ws = wb.create_sheet(title=sheet_name)
+                for r in dataframe_to_rows(df, index=False, header=True):
+                    ws.append(r)
+                
+                results_by_sheet[sheet_name] = {
+                    "rows": len(df),
+                    "columns_decrypted": columns_to_decrypt,
+                    "values_decrypted": decrypted_count
+                }
+                
+            except Exception as e:
+                console.print(f"[red]Error processing sheet '{sheet_name}': {e}[/red]")
+                total_failed_count += 1
+                continue
+        
+        # Save Excel file
+        try:
+            wb.save(str(output_path))
+            console.print(f"\n[green]✓[/green] Decrypted Excel file saved to: {output_path}")
         except Exception as e:
-            console.print(f"[red]✗[/red] Error decrypting {column}: {e}")
-            failed_count += 1
-    
-    # Save decrypted file
-    try:
-        df.to_csv(output_path, index=False)
-        console.print(f"\n[green]✓[/green] Decrypted file saved to: {output_path}")
-    except Exception as e:
-        console.print(f"[red]Error saving file: {e}[/red]")
-        return
-    
-    # Summary
-    console.print("\n[bold green]Decryption Complete![/bold green]\n")
-    
-    summary_table = Table(title="Summary", show_header=True, header_style="bold cyan")
-    summary_table.add_column("Metric", style="cyan")
-    summary_table.add_column("Value", style="green")
-    
-    summary_table.add_row("Rows processed", str(len(df)))
-    summary_table.add_row("Total columns", str(len(df.columns)))
-    summary_table.add_row("Columns decrypted", str(len(columns_to_decrypt)))
-    summary_table.add_row("Values decrypted", str(decrypted_count))
-    if not_found_count > 0:
-        summary_table.add_row("Values not found in vault", str(not_found_count), style="dim")
-    if failed_count > 0:
-        summary_table.add_row("Failed columns", str(failed_count), style="yellow")
-    
-    console.print(summary_table)
+            console.print(f"[red]Error saving Excel file: {e}[/red]")
+            return
+        
+        # Summary
+        console.print("\n[bold green]Decryption Complete![/bold green]\n")
+        
+        summary_table = Table(title="Summary", show_header=True, header_style="bold cyan")
+        summary_table.add_column("Metric", style="cyan")
+        summary_table.add_column("Value", style="green")
+        
+        summary_table.add_row("Sheets processed", str(len(sheet_names)))
+        summary_table.add_row("Total rows processed", str(total_rows))
+        summary_table.add_row("Columns decrypted", str(len(all_columns_decrypted)))
+        summary_table.add_row("Values decrypted", str(total_decrypted_count))
+        if total_not_found_count > 0:
+            summary_table.add_row("Values not found in vault", str(total_not_found_count), style="dim")
+        if total_failed_count > 0:
+            summary_table.add_row("Failed columns", str(total_failed_count), style="yellow")
+        
+        console.print(summary_table)
+        
+    else:
+        # Process CSV file (original logic)
+        try:
+            df = pd.read_csv(input_path)
+            console.print(f"[green]✓[/green] Loaded {len(df)} rows from CSV")
+        except Exception as e:
+            console.print(f"[red]Error reading CSV: {e}[/red]")
+            return
+        
+        # Determine columns to decrypt
+        if columns:
+            # User specified columns - decrypt only those
+            columns_to_decrypt = [col for col in columns if col in df.columns]
+        else:
+            # Auto-detect: only decrypt columns that have mappings in the vault
+            try:
+                stats = vault_obj.get_statistics()
+                columns_with_mappings = set(stats.get("column_counts", {}).keys())
+                # Only decrypt columns that exist in both CSV and vault
+                columns_to_decrypt = [col for col in df.columns if col in columns_with_mappings]
+                
+                if columns_to_decrypt:
+                    console.print(f"[dim]Auto-detected {len(columns_to_decrypt)} column(s) with mappings in vault[/dim]")
+                else:
+                    console.print("[yellow]No columns with mappings found in vault. Nothing to decrypt.[/yellow]")
+                    console.print("[dim]All columns will be preserved as-is.[/dim]")
+            except Exception as e:
+                console.print(f"[yellow]Could not query vault for column mappings: {e}[/yellow]")
+                console.print("[yellow]Will attempt to decrypt all columns...[/yellow]")
+                columns_to_decrypt = list(df.columns)
+        
+        # Filter to only columns that exist
+        columns_to_decrypt = [col for col in columns_to_decrypt if col in df.columns]
+        
+        if not columns_to_decrypt:
+            console.print("[yellow]No valid columns to decrypt. Saving file with all original values preserved.[/yellow]")
+            # Still save the file even if nothing to decrypt
+            df.to_csv(output_path, index=False)
+            console.print(f"[green]✓[/green] File saved to: {output_path} (no decryption needed)")
+            return
+        
+        console.print(f"\n[bold]Decrypting {len(columns_to_decrypt)} column(s)...[/bold]\n")
+        
+        # Decrypt each column
+        decrypted_count = 0
+        failed_count = 0
+        not_found_count = 0
+        
+        for column in tqdm(columns_to_decrypt, desc="Decrypting columns", disable=False):
+            try:
+                original_count = len(df[column].dropna())
+                decrypted_in_col = 0
+                
+                # Decrypt values
+                def decrypt_value(x):
+                    nonlocal decrypted_in_col
+                    if pd.notna(x) and str(x).strip():
+                        original = vault_obj.reverse_lookup(str(x), column, seed)
+                        if original is not None:
+                            decrypted_in_col += 1
+                            return original
+                        # If not found in vault, keep the anonymized value
+                    return x
+                
+                df[column] = df[column].apply(decrypt_value)
+                
+                decrypted_count += decrypted_in_col
+                not_found = original_count - decrypted_in_col
+                
+                if decrypted_in_col > 0:
+                    console.print(f"[green]✓[/green] {column}: {decrypted_in_col}/{original_count} values decrypted")
+                    if not_found > 0:
+                        console.print(f"[dim]  ({not_found} values not found in vault, kept as-is)[/dim]")
+                else:
+                    console.print(f"[yellow]⚠[/yellow] {column}: No mappings found in vault (kept as-is)")
+                    not_found_count += not_found
+            
+            except Exception as e:
+                console.print(f"[red]✗[/red] Error decrypting {column}: {e}")
+                failed_count += 1
+        
+        # Save decrypted file
+        try:
+            df.to_csv(output_path, index=False)
+            console.print(f"\n[green]✓[/green] Decrypted file saved to: {output_path}")
+        except Exception as e:
+            console.print(f"[red]Error saving file: {e}[/red]")
+            return
+        
+        # Summary
+        console.print("\n[bold green]Decryption Complete![/bold green]\n")
+        
+        summary_table = Table(title="Summary", show_header=True, header_style="bold cyan")
+        summary_table.add_column("Metric", style="cyan")
+        summary_table.add_column("Value", style="green")
+        
+        summary_table.add_row("Rows processed", str(len(df)))
+        summary_table.add_row("Total columns", str(len(df.columns)))
+        summary_table.add_row("Columns decrypted", str(len(columns_to_decrypt)))
+        summary_table.add_row("Values decrypted", str(decrypted_count))
+        if not_found_count > 0:
+            summary_table.add_row("Values not found in vault", str(not_found_count), style="dim")
+        if failed_count > 0:
+            summary_table.add_row("Failed columns", str(failed_count), style="yellow")
+        
+        console.print(summary_table)
 
 
 @cli.command()

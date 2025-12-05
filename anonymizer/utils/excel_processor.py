@@ -25,7 +25,7 @@ class ExcelProcessor:
     
     def __init__(
         self,
-        transformer: FormatPreservingTransformer,
+        transformer: Optional[FormatPreservingTransformer] = None,
         detector: Optional[DataTypeDetector] = None,
         chunk_size: int = 10000,
         use_read_only: bool = True
@@ -34,7 +34,7 @@ class ExcelProcessor:
         Initialize Excel processor
         
         Args:
-            transformer: Transformer to use for anonymization
+            transformer: Transformer to use for anonymization (optional, needed only for anonymization)
             detector: Optional data type detector (creates new if None)
             chunk_size: Size of chunks for processing large files
             use_read_only: Use read-only mode for openpyxl (faster, less memory)
