@@ -10,7 +10,6 @@ A powerful Python tool for anonymizing CSV and Excel files while preserving data
 - **Reversible Anonymization**: Encrypted mapping vault for deterministic reversibility
 - **Cross-Dataset Integrity**: Maintain referential integrity across multiple files
 - **Excel File Support**: Full support for .xlsx, .xls, .xlsm, .xlsb, and .ods files with multi-sheet handling
-- **Full CSV Support**
 - **Full Decryption Support**: Restore anonymized data back to original values
 
 ## 📦 Installation
@@ -35,10 +34,10 @@ python -m anonymizer.cli analyze -f data.xlsx
 
 ```bash
 # CSV file
-python -m anonymizer.cli anonymize -i data.csv -o output/ --vault-password your_password
+python -m anonymizer.cli anonymize -i data.csv -o output/
 
 # Excel file (preserves sheet structure)
-python -m anonymizer.cli anonymize -i data.xlsx -o output/ --seed my_seed --vault-password your_password
+python -m anonymizer.cli anonymize -i data.xlsx -o output/ --seed my_seed
 ```
 
 ### 3. Decrypt Anonymized Data
@@ -66,13 +65,13 @@ python -m anonymizer.cli decrypt \
 ### Interactive Column Selection
 
 ```bash
-python -m anonymizer.cli anonymize -i data.csv -o output/ --interactive -p your_password --seed my_seed
+python -m anonymizer.cli anonymize -i data.csv -o output/ --interactive
 ```
 
 ### Preserve Domain Grouping
 
 ```bash
-python -m anonymizer.cli anonymize -i data.csv -o output/ --preserve-domain -p your_password --seed my_seed
+python -m anonymizer.cli anonymize -i data.csv -o output/ --preserve-domain
 ```
 
 **Result:** `john.smith@gmail.com` → `fakeuser@anonymizedgmail.com`  
@@ -87,9 +86,7 @@ python -m anonymizer.cli anonymize \
     -i products.csv \
     -o output/ \
     --seed my_secret_seed \
-    --profile referential_integrity \
-    -p your_password --seed my_seed
-
+    --profile referential_integrity
 ```
 
 All files automatically share the same vault - same values get the same anonymized output across all files.
@@ -102,15 +99,14 @@ python -m anonymizer.cli anonymize \
     -i customers_sample.csv \
     -o output/ \
     --seed test_seed \
-    --profile referential_integrity\
-    -p your_password
+    --profile referential_integrity
 
 # Second run - reuse the same vault
 python -m anonymizer.cli anonymize \
     -i new_customers.csv \
     -o output/ \
     --seed test_seed \
-    --vault output/{your time stamp}/mapping_vault.sqlite \
+    --vault output/20240101_120000/mapping_vault.sqlite \
     --vault-password your_password
 ```
 
@@ -118,10 +114,10 @@ python -m anonymizer.cli anonymize \
 
 ```bash
 # Process all sheets (preserves structure)
-python -m anonymizer.cli anonymize -i data.xlsx -o output/ --seed my_seed --vault-password your_password
+python -m anonymizer.cli anonymize -i data.xlsx -o output/ --seed my_seed
 
 # Interactive mode: step through each sheet
-python -m anonymizer.cli anonymize -i data.xlsx -o output/ --seed my_seed --interactive --vault-password your_password
+python -m anonymizer.cli anonymize -i data.xlsx -o output/ --seed my_seed --interactive
 
 # Process specific sheets
 python -m anonymizer.cli anonymize \
@@ -129,8 +125,7 @@ python -m anonymizer.cli anonymize \
     -o output/ \
     --seed my_seed \
     --sheet "Sheet1" \
-    --sheet "Sheet2" \
-    --vault-password your_password
+    --sheet "Sheet2"
 ```
 
 ## 🔧 Command Reference
@@ -177,7 +172,7 @@ python -m anonymizer.cli decrypt \
 ### Reverse Lookup
 
 ```bash
-python -m anonymizer.cli reverse -v output/{your time stamp}/mapping_vault.sqlite -o "John Smith" -c {$columb name} --seed my_seed -p your_password
+python -m anonymizer.cli reverse -v vault.sqlite -o "John Smith" -c name --seed seed
 ```
 
 ## 🔐 Anonymization Modes
@@ -253,6 +248,8 @@ processor.process_file(
 ## 📚 Documentation
 
 - **[DETAILED_GUIDE.md](DETAILED_GUIDE.md)**: Complete documentation with all features, examples, and advanced usage
+- **[USAGE.md](USAGE.md)**: Detailed usage guide
+- **[QUICKSTART.md](QUICKSTART.md)**: Quick start guide
 
 ## 🐛 Troubleshooting
 
@@ -261,15 +258,12 @@ processor.process_file(
 - For large files, consider converting to CSV first
 - Use `--interactive` to explore sheets first
 
+**Slow processing?**
+- Files are automatically processed in chunks
+- For very large Excel files, convert to CSV first
+
 **Missing dependencies?**
 - Install optional packages: `pip install pyxlsb odfpy` (only if needed)
-
-**Errors**
--Error during interactive selection: Error reading Excel file: File is not a zip file
-Falling back to anonymizing all columns 
-
-to fix the above error review your excel to confirm it is not password projected, if so please save a copy without password to continue.
-
 
 ## 📄 License
 
@@ -281,8 +275,3 @@ MIT License - See [LICENSE](LICENSE) file for details.
 
 For more information, run `python -m anonymizer.cli --help`  
 For detailed documentation, see [DETAILED_GUIDE.md](DETAILED_GUIDE.md)
-
-
-
-
-

@@ -153,7 +153,7 @@ class FormatPreservingFakeTransformer(FormatPreservingTransformer):
         elif data_type == DataType.PHONE:
             result = self._transform_phone(value_str)
         elif data_type == DataType.NAME:
-            result = self._transform_name(value_str)
+            result = self._transform_name_with_collision_check(value_str, column_name)
         elif data_type == DataType.UUID or data_type == DataType.GUID:
             result = self._transform_uuid(value_str)
         elif data_type == DataType.DATE:
@@ -223,21 +223,82 @@ class FormatPreservingFakeTransformer(FormatPreservingTransformer):
         
         return result
     
-    def _transform_name(self, value: str) -> str:
-        """Transform name while preserving capitalization and structure"""
-        words = value.split()
-        fake_words = []
+    def _transform_name_with_collision_check(self, value: str, column_name: str) -> str:
+        """
+        Transform name with collision detection and deterministic retry.
         
-        for word in words:
-            if len(word) == 1:
-                # Preserve initial
-                fake_words.append(word)
+        If a collision is detected (same anonymized name for different source),
+        retries with increasing collision_attempt counter for deterministic regeneration.
+        """
+        max_attempts = 100  # Prevent infinite loops
+        
+        for attempt in range(max_attempts):
+            result = self._transform_name(value, collision_attempt=attempt)
+            
+            # Check for collision if vault is available
+            if self.vault:
+                has_collision = self.vault.check_collision(
+                    result,
+                    value,
+                    column_name,
+                    self.seed
+                )
+                
+                if not has_collision:
+                    # No collision, safe to return
+                    return result
+                # Collision detected, try again with next attempt number
             else:
-                fake_name = self.faker.first_name() if len(fake_words) == 0 else self.faker.last_name()
-                fake_word = self._preserve_format(word, fake_name[:len(word)])
-                fake_words.append(fake_word)
+                # No vault, no collision checking possible
+                return result
         
-        return ' '.join(fake_words)
+        # If we exhausted all attempts, return the last generated value
+        # (should be very rare with proper pool sizes)
+        return result
+    
+    def _transform_name(self, value: str, collision_attempt: int = 0) -> str:
+        """
+        Transform name while preserving capitalization and structure.
+        
+        Args:
+            value: Original name to transform
+            collision_attempt: Attempt number (0 = first attempt, 1+ = collision retry)
+                              Used for deterministic collision resolution
+        """
+        # Use value-specific seed for determinism (like _anonymize_domain does)
+        # Include collision_attempt to generate different values on retry
+        original_random_state = None
+        original_faker_state = None
+        
+        if self.seed:
+            # Save current state to restore later
+            original_random_state = random.getstate()
+            # Create deterministic seed based on value + collision attempt
+            seed_string = f"{self.seed}:{value}:{collision_attempt}"
+            seed_value = hash(seed_string) % (2**32)
+            random.seed(seed_value)
+            Faker.seed(seed_value)
+        
+        try:
+            words = value.split()
+            fake_words = []
+            
+            for word in words:
+                if len(word) == 1:
+                    # Preserve initial
+                    fake_words.append(word)
+                else:
+                    fake_name = self.faker.first_name() if len(fake_words) == 0 else self.faker.last_name()
+                    fake_word = self._preserve_format(word, fake_name[:len(word)])
+                    fake_words.append(fake_word)
+            
+            return ' '.join(fake_words)
+        finally:
+            # Restore original random/Faker state if we changed it
+            if self.seed and original_random_state is not None:
+                random.setstate(original_random_state)
+                # Reset Faker to original seed (approximate restoration)
+                Faker.seed(hash(self.seed) % (2**32))
     
     def _transform_uuid(self, value: str) -> str:
         """Transform UUID/GUID"""

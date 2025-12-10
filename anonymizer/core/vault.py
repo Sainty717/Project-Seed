@@ -182,6 +182,50 @@ class MappingVault:
         
         return None
     
+    def check_collision(
+        self,
+        anonymized_value: str,
+        original_value: str,
+        column_name: str,
+        seed: Optional[str] = None
+    ) -> bool:
+        """
+        Check if an anonymized value already exists for a different original value.
+        
+        Returns True if collision detected (anonymized_value exists for different original),
+        False otherwise.
+        """
+        conn = sqlite3.connect(str(self.vault_path))
+        cursor = conn.cursor()
+        
+        # Get the hash key for the current original value to exclude it from collision check
+        current_hash_key = self._hash_key(original_value, column_name, seed)
+        
+        # Search through all mappings for this column
+        cursor.execute('''
+            SELECT hash_key, anonymized_value FROM mappings
+            WHERE column_name = ?
+        ''', (column_name,))
+        
+        for row in cursor.fetchall():
+            try:
+                # Skip if it's the same original value
+                if row[0] == current_hash_key:
+                    continue
+                
+                # Decrypt and check if anonymized value matches
+                encrypted_anonymized = base64.b64decode(row[1])
+                decrypted_anonymized = self.cipher.decrypt(encrypted_anonymized).decode()
+                
+                if decrypted_anonymized == anonymized_value:
+                    conn.close()
+                    return True  # Collision detected
+            except Exception:
+                continue
+        
+        conn.close()
+        return False  # No collision
+    
     def reverse_lookup(
         self,
         anonymized_value: str,
